@@ -1,0 +1,44 @@
+const authService = require('../services/authService');
+
+const authController = {
+  async register(req, res, next) {
+    try {
+      const user = await authService.register(req.body);
+      res.status(201).json({ message: 'User registered', user: user.toJSON() });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async login(req, res, next) {
+    try {
+      const { accessToken, refreshToken, user } = await authService.login(req.body);
+      res.json({ accessToken, refreshToken, user: user.toJSON() });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  logout(req, res, next) {
+    try {
+      const { refreshToken } = req.body;
+      authService.logout(refreshToken);
+      res.json({ message: 'Logged out' });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  refreshToken(req, res, next) {
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken) return res.status(400).json({ error: 'refreshToken required' });
+      const tokens = authService.refreshAccessToken(refreshToken);
+      res.json(tokens);
+    } catch (err) {
+      next(err);
+    }
+  },
+};
+
+module.exports = authController;
