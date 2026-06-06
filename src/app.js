@@ -1,5 +1,6 @@
 const express = require('express');
 const { port } = require('./config/env');
+const prisma = require('./config/prismaClient');
 const errorHandler = require('./middleware/errorHandler');
 
 const authRoutes = require('./routes/authRoutes');
@@ -27,11 +28,23 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
 
-// Error handler
+// Central error handler
 app.use(errorHandler);
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+
+// Graceful shutdown — disconnect Prisma before exiting
+async function shutdown(signal) {
+  console.log(`${signal} received — shutting down`);
+  server.close(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;

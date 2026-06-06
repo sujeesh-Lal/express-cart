@@ -1,38 +1,49 @@
-/**
- * In-memory cart store — one cart per user.
- */
-const { v4: uuidv4 } = require('uuid');
-const Cart = require('../models/Cart');
-const CartItem = require('../models/CartItem');
+const prisma = require('../config/prismaClient');
 
-// Map: userId → Cart
-const carts = new Map();
+/** Include items with product info on every cart query. */
+const CART_INCLUDE = { items: { include: { product: true } } };
 
 const cartRepository = {
-  findByUserId(userId) {
-    return carts.get(userId) || null;
+  async findByUserId(userId) {
+    return prisma.cart.findUnique({ where: { userId }, include: CART_INCLUDE });
   },
 
-  getOrCreate(userId) {
-    if (!carts.has(userId)) {
-      carts.set(userId, new Cart({ id: uuidv4(), userId, items: [] }));
-    }
-    return carts.get(userId);
+  /** Returns the cart, creating it if it doesn't exist yet. */
+  async getOrCreate(userId) {
+    return prisma.cart.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+      include: CART_INCLUDE,
+    });
   },
 
-  save(cart) {
-    cart.updatedAt = new Date();
-    carts.set(cart.userId, cart);
-    return cart;
+  /**
+   * Create or update a single cart item (upsert by cartId + productId).
+   * Returns the full updated cart.
+   */
+  async upsertItem(cartId, { productId, quantity, priceAtTime }) {
+    await prisma.cartItem.upsert({
+      where: { cartId_productId: { cartId, productId } },
+      create: { cartId, productId, quantity, priceAtTime },
+      update: { quantity, priceAtTime },
+    });
+
+    return prisma.cart.findUnique({ where: { id: cartId }, include: CART_INCLUDE });
   },
 
-  clear(userId) {
-    const cart = carts.get(userId);
-    if (cart) {
-      cart.items = [];
-      cart.updatedAt = new Date();
-    }
-    return cart || null;
+  /** Remove a single item from the cart. Returns the updated cart. */
+  async removeItem(cartId, productId) {
+    await prisma.cartItem.deleteMany({ where: { cartId, productId } });
+    return prisma.cart.findUnique({ where: { id: cartId }, include: CART_INCLUDE });
+  },
+
+  /** Remove all items from the user's cart. Returns the cleared cart. */
+  async clear(userId) {
+    const cart = await prisma.cart.findUnique({ where: { userId } });
+    if (!cart) return null;
+    await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+    return prisma.cart.findUnique({ where: { userId }, include: CART_INCLUDE });
   },
 };
 

@@ -1,29 +1,37 @@
 const productRepository = require('../repositories/productRepository');
 
 const productService = {
-  listProducts(query) {
+  async listProducts(query) {
     return productRepository.findAll(query);
   },
 
-  getProduct(id) {
-    const product = productRepository.findById(id);
+  async getProduct(id) {
+    const product = await productRepository.findById(id);
     if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
     return product;
   },
 
-  createProduct(fields) {
+  async createProduct(fields) {
     return productRepository.create(fields);
   },
 
-  updateProduct(id, fields) {
-    const product = productRepository.update(id, fields);
-    if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
-    return product;
+  async updateProduct(id, fields) {
+    try {
+      return await productRepository.update(id, fields);
+    } catch (err) {
+      // Prisma throws P2025 when the record doesn't exist
+      if (err.code === 'P2025') throw Object.assign(new Error('Product not found'), { status: 404 });
+      throw err;
+    }
   },
 
-  deleteProduct(id) {
-    const deleted = productRepository.delete(id);
-    if (!deleted) throw Object.assign(new Error('Product not found'), { status: 404 });
+  async deleteProduct(id) {
+    try {
+      await productRepository.delete(id);
+    } catch (err) {
+      if (err.code === 'P2025') throw Object.assign(new Error('Product not found'), { status: 404 });
+      throw err;
+    }
   },
 };
 

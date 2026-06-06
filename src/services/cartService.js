@@ -1,60 +1,73 @@
 const cartRepository = require('../repositories/cartRepository');
 const productRepository = require('../repositories/productRepository');
-const CartItem = require('../models/CartItem');
+
+/** Compute total and itemCount from Prisma cart (plain object). */
+function formatCart(cart) {
+  const total = cart.items.reduce((sum, item) => sum + item.priceAtTime * item.quantity, 0);
+  const itemCount = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+  return { ...cart, total: +total.toFixed(2), itemCount };
+}
 
 const cartService = {
-  getCart(userId) {
-    return cartRepository.getOrCreate(userId);
+  async getCart(userId) {
+    const cart = await cartRepository.getOrCreate(userId);
+    return formatCart(cart);
   },
 
-  addItem(userId, { productId, quantity = 1 }) {
-    const product = productRepository.findById(productId);
+  async addItem(userId, { productId, quantity = 1 }) {
+    const product = await productRepository.findById(productId);
     if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
-    if (product.stock < quantity) {
+
+    const cart = await cartRepository.getOrCreate(userId);
+
+    // Calculate the new total quantity (existing + requested)
+    const existing = cart.items.find((i) => i.productId === productId);
+    const newQty = (existing ? existing.quantity : 0) + quantity;
+
+    if (product.stock < newQty) {
       throw Object.assign(new Error('Insufficient stock'), { status: 400 });
     }
 
-    const cart = cartRepository.getOrCreate(userId);
-    const existing = cart.items.find((i) => i.productId === productId);
+    const updated = await cartRepository.upsertItem(cart.id, {
+      productId,
+      quantity: newQty,
+      priceAtTime: product.price,
+    });
 
-    if (existing) {
-      const newQty = existing.quantity + quantity;
-      if (product.stock < newQty) {
-        throw Object.assign(new Error('Insufficient stock'), { status: 400 });
-      }
-      existing.quantity = newQty;
-    } else {
-      cart.items.push(new CartItem({ productId, quantity, priceAtTime: product.price }));
-    }
-
-    return cartRepository.save(cart);
+    return formatCart(updated);
   },
 
-  updateItem(userId, productId, { quantity }) {
+  async updateItem(userId, productId, { quantity }) {
     if (quantity <= 0) return cartService.removeItem(userId, productId);
 
-    const product = productRepository.findById(productId);
+    const product = await productRepository.findById(productId);
     if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
     if (product.stock < quantity) {
       throw Object.assign(new Error('Insufficient stock'), { status: 400 });
     }
 
-    const cart = cartRepository.getOrCreate(userId);
+    const cart = await cartRepository.getOrCreate(userId);
     const item = cart.items.find((i) => i.productId === productId);
     if (!item) throw Object.assign(new Error('Item not in cart'), { status: 404 });
 
-    item.quantity = quantity;
-    return cartRepository.save(cart);
+    const updated = await cartRepository.upsertItem(cart.id, {
+      productId,
+      quantity,
+      priceAtTime: item.priceAtTime, // keep original snapshot price
+    });
+
+    return formatCart(updated);
   },
 
-  removeItem(userId, productId) {
-    const cart = cartRepository.getOrCreate(userId);
-    cart.items = cart.items.filter((i) => i.productId !== productId);
-    return cartRepository.save(cart);
+  async removeItem(userId, productId) {
+    const cart = await cartRepository.getOrCreate(userId);
+    const updated = await cartRepository.removeItem(cart.id, productId);
+    return formatCart(updated);
   },
 
-  clearCart(userId) {
-    return cartRepository.clear(userId);
+  async clearCart(userId) {
+    const cart = await cartRepository.clear(userId);
+    return cart ? formatCart(cart) : null;
   },
 };
 

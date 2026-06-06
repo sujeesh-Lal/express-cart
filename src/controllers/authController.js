@@ -4,7 +4,7 @@ const authController = {
   async register(req, res, next) {
     try {
       const user = await authService.register(req.body);
-      res.status(201).json({ message: 'User registered', user: user.toJSON() });
+      res.status(201).json({ message: 'User registered', user });
     } catch (err) {
       next(err);
     }
@@ -13,7 +13,7 @@ const authController = {
   async login(req, res, next) {
     try {
       const { accessToken, refreshToken, user } = await authService.login(req.body);
-      res.json({ accessToken, refreshToken, user: user.toJSON() });
+      res.json({ accessToken, refreshToken, user });
     } catch (err) {
       next(err);
     }
@@ -29,11 +29,11 @@ const authController = {
     }
   },
 
-  refreshToken(req, res, next) {
+  async refreshToken(req, res, next) {
     try {
       const { refreshToken } = req.body;
       if (!refreshToken) return res.status(400).json({ error: 'refreshToken required' });
-      const tokens = authService.refreshAccessToken(refreshToken);
+      const tokens = await authService.refreshAccessToken(refreshToken);
       res.json(tokens);
     } catch (err) {
       next(err);

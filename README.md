@@ -1,40 +1,61 @@
 # Express Cart — E-Commerce Shopping Cart API
 
-A fully-structured REST API for an e-commerce shopping cart, built with **Node.js** and **Express**. All data is currently stored in-memory (mocked) so you can run it with zero infrastructure. Database and Stripe integrations are stubbed and ready to be wired in.
+A fully-structured REST API for an e-commerce shopping cart, built with **Node.js**, **Express**, and **PostgreSQL** via **Prisma ORM**. Stripe payment integration is stubbed and ready to be wired in.
 
 ---
 
 ## Tech Stack
 
 - **Node.js** + **Express** — HTTP server and routing
+- **PostgreSQL** — relational database
+- **Prisma ORM** — type-safe database access, migrations, and schema management
 - **bcryptjs** — password hashing
 - **jsonwebtoken** — JWT access tokens + refresh token rotation
-- **uuid** — unique ID generation
 - **dotenv** — environment config
 
 ---
 
 ## Getting Started
 
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL running locally (or a hosted instance such as Supabase, Railway, or Neon)
+
+### Setup
+
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Copy environment file and fill in values
+# 2. Copy environment file and fill in your DATABASE_URL
 cp .env.example .env
 
-# 3. Start development server (auto-restarts on file changes)
-npm run dev
+# 3. Run database migrations (creates all tables)
+npm run db:migrate
 
-# 4. Start production server
-npm start
+# 4. Seed the database (admin user + sample products)
+npm run db:seed
+
+# 5. Start development server (auto-restarts on file changes)
+npm run dev
 ```
 
 The server runs on `http://localhost:3000` by default.
 
+### Database Scripts
+
+| Command              | Description                                        |
+|----------------------|----------------------------------------------------|
+| `npm run db:migrate` | Apply pending migrations (creates tables)          |
+| `npm run db:push`    | Push schema changes directly (no migration files)  |
+| `npm run db:seed`    | Insert admin user and sample products              |
+| `npm run db:studio`  | Open Prisma Studio — visual DB browser             |
+| `npm run prisma:generate` | Regenerate Prisma client after schema changes |
+
 ### Seeded Data
 
-One admin account is available out of the box:
+One admin account is available after running `npm run db:seed`:
 
 | Field    | Value               |
 |----------|---------------------|
@@ -42,7 +63,7 @@ One admin account is available out of the box:
 | Password | admin123            |
 | Role     | admin               |
 
-Five sample products (Electronics, Office, Stationery) are pre-loaded.
+Five sample products (Electronics, Office, Stationery) are also seeded.
 
 ---
 
@@ -55,6 +76,9 @@ express-cart/
 ├── package.json
 ├── README.md
 ├── TECHNICAL.md              # Architecture and flow deep-dive
+├── prisma/
+│   ├── schema.prisma         # Database schema and Prisma config
+│   └── seed.js               # Seed script (admin user + products)
 └── src/
     ├── app.js                # Entry point — Express setup, route mounting
     ├── config/
@@ -232,10 +256,9 @@ Valid statuses: `pending` | `processing` | `shipped` | `delivered` | `cancelled`
 
 ## What's Mocked
 
-Everything works end-to-end without a database or Stripe account:
+The database layer is real (PostgreSQL via Prisma). Stripe is still stubbed:
 
-- **Data persistence** — stored in JavaScript arrays/Maps in memory. Data resets on server restart.
-- **Stripe payment intent** — returns a mock `pi_mock_*` object.
-- **Stripe webhook** — simulates a `payment_intent.succeeded` event.
+- **Stripe payment intent** (`POST /payments/checkout`) — returns a mock `pi_mock_*` object.
+- **Stripe webhook** (`POST /payments/webhook`) — simulates a `payment_intent.succeeded` event.
 
-See `TECHNICAL.md` for guidance on replacing mocks with real implementations.
+See `TECHNICAL.md` for how to replace these stubs with the real Stripe SDK.

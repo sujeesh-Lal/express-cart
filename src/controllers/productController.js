@@ -1,45 +1,45 @@
 const productService = require('../services/productService');
 
 const productController = {
-  listProducts(req, res, next) {
+  async listProducts(req, res, next) {
     try {
-      const result = productService.listProducts(req.query);
+      const result = await productService.listProducts(req.query);
       res.json(result);
     } catch (err) {
       next(err);
     }
   },
 
-  getProduct(req, res, next) {
+  async getProduct(req, res, next) {
     try {
-      const product = productService.getProduct(req.params.id);
+      const product = await productService.getProduct(req.params.id);
       res.json(product);
     } catch (err) {
       next(err);
     }
   },
 
-  createProduct(req, res, next) {
+  async createProduct(req, res, next) {
     try {
-      const product = productService.createProduct(req.body);
+      const product = await productService.createProduct(req.body);
       res.status(201).json(product);
     } catch (err) {
       next(err);
     }
   },
 
-  updateProduct(req, res, next) {
+  async updateProduct(req, res, next) {
     try {
-      const product = productService.updateProduct(req.params.id, req.body);
+      const product = await productService.updateProduct(req.params.id, req.body);
       res.json(product);
     } catch (err) {
       next(err);
     }
   },
 
-  deleteProduct(req, res, next) {
+  async deleteProduct(req, res, next) {
     try {
-      productService.deleteProduct(req.params.id);
+      await productService.deleteProduct(req.params.id);
       res.status(204).send();
     } catch (err) {
       next(err);

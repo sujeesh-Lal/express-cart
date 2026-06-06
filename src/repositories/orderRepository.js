@@ -1,35 +1,44 @@
-/**
- * In-memory order store.
- */
-const { v4: uuidv4 } = require('uuid');
-const { Order } = require('../models/Order');
+const prisma = require('../config/prismaClient');
 
-const orders = [];
+/** Include order items on every order query. */
+const ORDER_INCLUDE = { items: true };
 
 const orderRepository = {
-  findAll() {
-    return [...orders];
+  async findAll() {
+    return prisma.order.findMany({ include: ORDER_INCLUDE, orderBy: { createdAt: 'desc' } });
   },
 
-  findByUserId(userId) {
-    return orders.filter((o) => o.userId === userId);
+  async findByUserId(userId) {
+    return prisma.order.findMany({
+      where: { userId },
+      include: ORDER_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
   },
 
-  findById(id) {
-    return orders.find((o) => o.id === id) || null;
+  async findById(id) {
+    return prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
   },
 
-  create(fields) {
-    const order = new Order({ id: uuidv4(), ...fields });
-    orders.push(order);
-    return order;
+  /**
+   * Create an order together with its items in a single query.
+   * `items` should be an array of: { productId, name, quantity, priceAtTime }
+   */
+  async create({ userId, items, totalAmount, status, paymentStatus }) {
+    return prisma.order.create({
+      data: {
+        userId,
+        totalAmount,
+        status,
+        paymentStatus,
+        items: { create: items },
+      },
+      include: ORDER_INCLUDE,
+    });
   },
 
-  update(id, fields) {
-    const order = orders.find((o) => o.id === id);
-    if (!order) return null;
-    Object.assign(order, fields);
-    return order;
+  async update(id, fields) {
+    return prisma.order.update({ where: { id }, data: fields, include: ORDER_INCLUDE });
   },
 };
 

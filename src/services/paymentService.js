@@ -1,17 +1,24 @@
 /**
  * Payment service — Stripe integration stubbed out.
- * Replace mock responses with real Stripe SDK calls when ready.
+ * Replace mock blocks with real Stripe SDK calls when ready.
  */
 const orderRepository = require('../repositories/orderRepository');
-const { PAYMENT_STATUS } = require('../models/Order');
+
+const PAYMENT_STATUS = {
+  UNPAID: 'unpaid',
+  PAID: 'paid',
+  REFUNDED: 'refunded',
+};
 
 const paymentService = {
   /**
    * Create a Stripe Payment Intent for an order.
-   * TODO: Replace with `stripe.paymentIntents.create(...)` when Stripe is configured.
+   * TODO: Replace mock with:
+   *   const stripe = require('stripe')(config.stripe.secretKey);
+   *   return stripe.paymentIntents.create({ amount, currency: 'usd', metadata: { orderId } });
    */
   async createCheckout(userId, orderId) {
-    const order = orderRepository.findById(orderId);
+    const order = await orderRepository.findById(orderId);
     if (!order) throw Object.assign(new Error('Order not found'), { status: 404 });
     if (order.userId !== userId) throw Object.assign(new Error('Forbidden'), { status: 403 });
     if (order.paymentStatus === PAYMENT_STATUS.PAID) {
@@ -27,39 +34,44 @@ const paymentService = {
       status: 'requires_payment_method',
     };
 
-    // Save the intent ID on the order
-    orderRepository.update(orderId, { paymentIntentId: mockPaymentIntent.id });
+    await orderRepository.update(orderId, { paymentIntentId: mockPaymentIntent.id });
 
     return mockPaymentIntent;
   },
 
   /**
    * Handle Stripe webhook events.
-   * TODO: Verify signature with `stripe.webhooks.constructEvent(...)`.
+   * TODO: Replace mock with:
+   *   const event = stripe.webhooks.constructEvent(rawBody, signature, config.stripe.webhookSecret);
+   *   then switch on event.type.
+   *
+   * NOTE: This route must receive the raw request body (not JSON-parsed).
+   * Mount paymentRoutes before express.json() and use express.raw() for the webhook path.
    */
   async handleWebhook(rawBody, signature) {
-    // MOCK: Simulate processing a payment_intent.succeeded event
-    // In production: parse and verify the real Stripe event here
-
+    // MOCK: Simulate a payment_intent.succeeded event
     const mockEvent = {
       type: 'payment_intent.succeeded',
-      data: { object: { id: 'pi_mock_webhook', metadata: {} } },
+      data: { object: { id: 'pi_mock_webhook' } },
     };
 
     if (mockEvent.type === 'payment_intent.succeeded') {
       const paymentIntentId = mockEvent.data.object.id;
-      const orders = orderRepository.findAll();
+      const orders = await orderRepository.findAll();
       const order = orders.find((o) => o.paymentIntentId === paymentIntentId);
       if (order) {
-        orderRepository.update(order.id, { paymentStatus: PAYMENT_STATUS.PAID, status: 'processing' });
+        await orderRepository.update(order.id, {
+          paymentStatus: PAYMENT_STATUS.PAID,
+          status: 'processing',
+        });
       }
     }
 
     return { received: true };
   },
 
-  getPaymentStatus(orderId, userId, role) {
-    const order = orderRepository.findById(orderId);
+  async getPaymentStatus(orderId, userId, role) {
+    const order = await orderRepository.findById(orderId);
     if (!order) throw Object.assign(new Error('Order not found'), { status: 404 });
     if (role !== 'admin' && order.userId !== userId) {
       throw Object.assign(new Error('Forbidden'), { status: 403 });

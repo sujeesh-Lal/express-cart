@@ -3,21 +3,22 @@ const jwt = require('jsonwebtoken');
 const { jwt: jwtConfig } = require('../config/env');
 const userRepository = require('../repositories/userRepository');
 
-// In-memory refresh token store (replace with DB/Redis later)
+// In-memory refresh token store.
+// TODO: replace with Redis SET or a DB table for persistence across restarts.
 const refreshTokens = new Set();
 
 const authService = {
   async register({ name, email, password }) {
-    const existing = userRepository.findByEmail(email);
+    const existing = await userRepository.findByEmail(email);
     if (existing) throw Object.assign(new Error('Email already in use'), { status: 409 });
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = userRepository.create({ name, email, passwordHash });
-    return user;
+    const user = await userRepository.create({ name, email, passwordHash });
+    return userRepository.sanitize(user);
   },
 
   async login({ email, password }) {
-    const user = userRepository.findByEmail(email);
+    const user = await userRepository.findByEmail(email);
     if (!user) throw Object.assign(new Error('Invalid credentials'), { status: 401 });
 
     const valid = await bcrypt.compare(password, user.passwordHash);
@@ -27,14 +28,14 @@ const authService = {
     const refreshToken = authService.signRefreshToken(user);
     refreshTokens.add(refreshToken);
 
-    return { accessToken, refreshToken, user };
+    return { accessToken, refreshToken, user: userRepository.sanitize(user) };
   },
 
   logout(refreshToken) {
     refreshTokens.delete(refreshToken);
   },
 
-  refreshAccessToken(refreshToken) {
+  async refreshAccessToken(refreshToken) {
     if (!refreshTokens.has(refreshToken)) {
       throw Object.assign(new Error('Invalid refresh token'), { status: 401 });
     }
@@ -47,7 +48,7 @@ const authService = {
       throw Object.assign(new Error('Refresh token expired'), { status: 401 });
     }
 
-    const user = userRepository.findById(payload.sub);
+    const user = await userRepository.findById(payload.sub);
     if (!user) throw Object.assign(new Error('User not found'), { status: 401 });
 
     // Rotate refresh token

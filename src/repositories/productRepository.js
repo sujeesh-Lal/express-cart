@@ -1,70 +1,62 @@
-/**
- * In-memory product store — replace with DB queries later.
- */
-const { v4: uuidv4 } = require('uuid');
-const Product = require('../models/Product');
-
-const products = [
-  new Product({ id: 'p-001', name: 'Wireless Mouse', description: 'Ergonomic wireless mouse', price: 29.99, stock: 50, category: 'Electronics', imageUrl: '' }),
-  new Product({ id: 'p-002', name: 'Mechanical Keyboard', description: 'TKL mechanical keyboard', price: 89.99, stock: 30, category: 'Electronics', imageUrl: '' }),
-  new Product({ id: 'p-003', name: 'USB-C Hub', description: '7-in-1 USB-C hub', price: 49.99, stock: 20, category: 'Electronics', imageUrl: '' }),
-  new Product({ id: 'p-004', name: 'Desk Lamp', description: 'LED desk lamp with USB charging', price: 34.99, stock: 40, category: 'Office', imageUrl: '' }),
-  new Product({ id: 'p-005', name: 'Notebook', description: 'A5 hardcover notebook', price: 9.99, stock: 100, category: 'Stationery', imageUrl: '' }),
-];
+const prisma = require('../config/prismaClient');
 
 const productRepository = {
-  findAll({ search, category, minPrice, maxPrice, page = 1, limit = 10 } = {}) {
-    let results = [...products];
+  async findAll({ search, category, minPrice, maxPrice, page = 1, limit = 10 } = {}) {
+    const where = {};
 
     if (search) {
-      const q = search.toLowerCase();
-      results = results.filter(
-        (p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
-      );
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
     }
-    if (category) {
-      results = results.filter((p) => p.category.toLowerCase() === category.toLowerCase());
+    if (category) where.category = { equals: category, mode: 'insensitive' };
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      where.price = {};
+      if (minPrice !== undefined) where.price.gte = Number(minPrice);
+      if (maxPrice !== undefined) where.price.lte = Number(maxPrice);
     }
-    if (minPrice !== undefined) results = results.filter((p) => p.price >= Number(minPrice));
-    if (maxPrice !== undefined) results = results.filter((p) => p.price <= Number(maxPrice));
 
-    const total = results.length;
-    const offset = (page - 1) * limit;
-    const data = results.slice(offset, offset + Number(limit));
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    return { data, total, page: Number(page), limit: Number(limit), totalPages: Math.ceil(total / limit) };
+    const [data, total] = await Promise.all([
+      prisma.product.findMany({ where, skip, take: limitNum, orderBy: { createdAt: 'desc' } }),
+      prisma.product.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    };
   },
 
-  findById(id) {
-    return products.find((p) => p.id === id) || null;
+  async findById(id) {
+    return prisma.product.findUnique({ where: { id } });
   },
 
-  create(fields) {
-    const product = new Product({ id: uuidv4(), ...fields });
-    products.push(product);
-    return product;
+  async create(fields) {
+    return prisma.product.create({ data: fields });
   },
 
-  update(id, fields) {
-    const product = products.find((p) => p.id === id);
-    if (!product) return null;
-    Object.assign(product, fields, { updatedAt: new Date() });
-    return product;
+  async update(id, fields) {
+    return prisma.product.update({ where: { id }, data: fields });
   },
 
-  delete(id) {
-    const idx = products.findIndex((p) => p.id === id);
-    if (idx === -1) return false;
-    products.splice(idx, 1);
+  async delete(id) {
+    await prisma.product.delete({ where: { id } });
     return true;
   },
 
-  decrementStock(id, qty) {
-    const product = products.find((p) => p.id === id);
-    if (!product) return null;
-    product.stock -= qty;
-    product.updatedAt = new Date();
-    return product;
+  async decrementStock(id, qty) {
+    return prisma.product.update({
+      where: { id },
+      data: { stock: { decrement: qty } },
+    });
   },
 };
 

@@ -1,51 +1,40 @@
-/**
- * In-memory user store — replace with DB queries later.
- */
-const { v4: uuidv4 } = require('uuid');
-const User = require('../models/User');
+const prisma = require('../config/prismaClient');
 
-// Seed one admin user (passwordHash = bcrypt of "admin123")
-const users = [
-  new User({
-    id: 'admin-001',
-    name: 'Admin',
-    email: 'admin@example.com',
-    // bcrypt hash of "admin123" — pre-computed so no async on startup
-    passwordHash: '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
-    role: 'admin',
-  }),
-];
+/**
+ * Strip passwordHash before sending user data in responses.
+ * Always call this before returning a user to a controller.
+ */
+function sanitize(user) {
+  if (!user) return null;
+  const { passwordHash, ...safe } = user;
+  return safe;
+}
 
 const userRepository = {
-  findAll() {
-    return [...users];
+  sanitize,
+
+  async findAll() {
+    return prisma.user.findMany({ orderBy: { createdAt: 'desc' } });
   },
 
-  findById(id) {
-    return users.find((u) => u.id === id) || null;
+  async findById(id) {
+    return prisma.user.findUnique({ where: { id } });
   },
 
-  findByEmail(email) {
-    return users.find((u) => u.email === email) || null;
+  async findByEmail(email) {
+    return prisma.user.findUnique({ where: { email } });
   },
 
-  create({ name, email, passwordHash, role = 'user' }) {
-    const user = new User({ id: uuidv4(), name, email, passwordHash, role });
-    users.push(user);
-    return user;
+  async create({ name, email, passwordHash, role = 'user' }) {
+    return prisma.user.create({ data: { name, email, passwordHash, role } });
   },
 
-  update(id, fields) {
-    const user = users.find((u) => u.id === id);
-    if (!user) return null;
-    Object.assign(user, fields, { updatedAt: new Date() });
-    return user;
+  async update(id, fields) {
+    return prisma.user.update({ where: { id }, data: fields });
   },
 
-  delete(id) {
-    const idx = users.findIndex((u) => u.id === id);
-    if (idx === -1) return false;
-    users.splice(idx, 1);
+  async delete(id) {
+    await prisma.user.delete({ where: { id } });
     return true;
   },
 };
