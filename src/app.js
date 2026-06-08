@@ -1,7 +1,9 @@
+const http = require('http');
 const express = require('express');
 const { port } = require('./config/env');
 const prisma = require('./config/prismaClient');
 const errorHandler = require('./middleware/errorHandler');
+const { applyGraphQL } = require('./graphql/server');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -11,10 +13,9 @@ const orderRoutes = require('./routes/orderRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
-
 app.use(express.json());
 
-// Routes
+// ── REST routes ───────────────────────────────────────────────────────────────
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
 app.use('/products', productRoutes);
@@ -25,20 +26,40 @@ app.use('/payments', paymentRoutes);
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// 404
-app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+// 404 and errorHandler are registered AFTER applyGraphQL so that the /graphql
+// route is in place before the catch-all 404 handler is added.
+// Express matches middleware in registration order — if 404 came first, every
+// request to /graphql would be caught by it before reaching Apollo Server.
 
-// Central error handler
-app.use(errorHandler);
+const httpServer = http.createServer(app);
 
-const server = app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+async function start() {
+  // Mount GraphQL (HTTP + WebSocket) on the shared http.Server
+  await applyGraphQL(app, httpServer);
+
+  // 404 — must be after all routes including /graphql
+  app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
+
+  // Central error handler — must be last
+  app.use(errorHandler);
+
+  httpServer.listen(port, () => {
+    console.log(`REST API  → http://localhost:${port}`);
+    console.log(`GraphQL   → http://localhost:${port}/graphql`);
+    console.log(`WS Subs   → ws://localhost:${port}/graphql`);
+  });
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
 
-// Graceful shutdown — disconnect Prisma before exiting
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
 async function shutdown(signal) {
-  console.log(`${signal} received — shutting down`);
-  server.close(async () => {
+  console.log(`\n${signal} received — shutting down`);
+  httpServer.close(async () => {
     await prisma.$disconnect();
     process.exit(0);
   });
