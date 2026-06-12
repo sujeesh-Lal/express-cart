@@ -58,6 +58,13 @@ const productRepository = {
       data: { stock: { decrement: qty } },
     });
   },
+
+  async incrementStock(id, qty) {
+    return prisma.product.update({
+      where: { id },
+      data: { stock: { increment: qty } },
+    });
+  },
 };
 
 module.exports = productRepository;

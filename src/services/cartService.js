@@ -1,5 +1,20 @@
 const cartRepository = require('../repositories/cartRepository');
 const productRepository = require('../repositories/productRepository');
+const productClient = require('../clients/productClient');
+const { services } = require('../config/env');
+
+/**
+ * Resolve product data from either the remote Product Service (microservice mode)
+ * or the local repository (monolith mode).
+ *
+ * Microservice mode is active when PRODUCT_SERVICE_URL is set in env.
+ */
+async function resolveProduct(productId) {
+  if (services.productServiceUrl) {
+    return productClient.getProduct(productId);
+  }
+  return productRepository.findById(productId);
+}
 
 /** Compute total and itemCount from Prisma cart (plain object). */
 function formatCart(cart) {
@@ -15,7 +30,8 @@ const cartService = {
   },
 
   async addItem(userId, { productId, quantity = 1 }) {
-    const product = await productRepository.findById(productId);
+    // Resolve product — uses HTTP client when in microservice mode
+    const product = await resolveProduct(productId);
     if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
 
     const cart = await cartRepository.getOrCreate(userId);
@@ -40,7 +56,7 @@ const cartService = {
   async updateItem(userId, productId, { quantity }) {
     if (quantity <= 0) return cartService.removeItem(userId, productId);
 
-    const product = await productRepository.findById(productId);
+    const product = await resolveProduct(productId);
     if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
     if (product.stock < quantity) {
       throw Object.assign(new Error('Insufficient stock'), { status: 400 });

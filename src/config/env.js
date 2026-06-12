@@ -17,4 +17,13 @@ module.exports = {
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
+  services: {
+    // Set this to enable microservice mode for the Product Service.
+    // Leave blank to run in monolith mode (direct DB access).
+    productServiceUrl: process.env.PRODUCT_SERVICE_URL || '',
+    // Shared secret used to sign and verify service-to-service JWTs.
+    serviceJwtSecret:  process.env.SERVICE_JWT_SECRET  || 'dev_service_secret',
+    // Long-lived token this service sends as Authorization header on outbound calls.
+    serviceToken:      process.env.SERVICE_TOKEN       || '',
+  },
 };

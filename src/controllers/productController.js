@@ -45,6 +45,34 @@ const productController = {
       next(err);
     }
   },
+
+  // ── Service-to-service endpoints ──────────────────────────────────────────
+
+  async decrementStock(req, res, next) {
+    try {
+      const { quantity } = req.body;
+      if (!quantity || quantity < 1) {
+        return res.status(400).json({ error: 'quantity must be a positive integer' });
+      }
+      const product = await productService.decrementStock(req.params.id, Number(quantity));
+      res.json(product);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async releaseStock(req, res, next) {
+    try {
+      const { quantity } = req.body;
+      if (!quantity || quantity < 1) {
+        return res.status(400).json({ error: 'quantity must be a positive integer' });
+      }
+      const product = await productService.releaseStock(req.params.id, Number(quantity));
+      res.json(product);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = productController;

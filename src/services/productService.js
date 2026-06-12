@@ -54,6 +54,26 @@ const productService = {
       throw err;
     }
   },
+
+  // ── Service-to-service operations ─────────────────────────────────────────
+
+  async decrementStock(id, quantity) {
+    const product = await productRepository.findById(id);
+    if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
+    if (product.stock < quantity) {
+      throw Object.assign(
+        new Error(`Insufficient stock for "${product.name}" (available: ${product.stock})`),
+        { status: 400 }
+      );
+    }
+    return productRepository.decrementStock(id, quantity);
+  },
+
+  async releaseStock(id, quantity) {
+    const product = await productRepository.findById(id);
+    if (!product) throw Object.assign(new Error('Product not found'), { status: 404 });
+    return productRepository.incrementStock(id, quantity);
+  },
 };
 
 module.exports = productService;
