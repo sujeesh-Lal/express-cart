@@ -1,11 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 const { jwt: jwtConfig } = require('../config/env');
 const userRepository = require('../repositories/userRepository');
-
-// In-memory refresh token store.
-// TODO: replace with Redis SET or a DB table for persistence across restarts.
-const refreshTokens = new Set();
+const sessionStore = require('../utils/sessionStore');
 
 const authService = {
   async register({ name, email, password }) {
@@ -17,34 +15,54 @@ const authService = {
     return userRepository.sanitize(user);
   },
 
-  async login({ email, password }) {
+  async login({ email, password }, meta = {}) {
     const user = await userRepository.findByEmail(email);
     if (!user) throw Object.assign(new Error('Invalid credentials'), { status: 401 });
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw Object.assign(new Error('Invalid credentials'), { status: 401 });
 
-    const accessToken = authService.signAccessToken(user);
-    const refreshToken = authService.signRefreshToken(user);
-    refreshTokens.add(refreshToken);
+    // Generate a unique session ID for this login
+    const sessionId = uuidv4();
 
-    return { accessToken, refreshToken, user: userRepository.sanitize(user) };
+    // Persist session in Redis
+    await sessionStore.create(sessionId, {
+      userId: user.id,
+      role:   user.role,
+      ip:     meta.ip,
+      userAgent: meta.userAgent,
+    });
+
+    const accessToken  = authService.signAccessToken(user, sessionId);
+    const refreshToken = authService.signRefreshToken(user);
+
+    // Store refresh token in Redis (replaces the in-memory Set)
+    await sessionStore.saveRefreshToken(refreshToken, user.id);
+
+    return {
+      accessToken,
+      refreshToken,
+      sessionId,
+      user: userRepository.sanitize(user),
+    };
   },
 
-  logout(refreshToken) {
-    refreshTokens.delete(refreshToken);
+  async logout(refreshToken, sessionId) {
+    await Promise.all([
+      refreshToken ? sessionStore.deleteRefreshToken(refreshToken) : Promise.resolve(),
+      sessionId    ? sessionStore.destroy(sessionId)               : Promise.resolve(),
+    ]);
   },
 
   async refreshAccessToken(refreshToken) {
-    if (!refreshTokens.has(refreshToken)) {
-      throw Object.assign(new Error('Invalid refresh token'), { status: 401 });
-    }
+    const exists = await sessionStore.hasRefreshToken(refreshToken);
+    if (!exists) throw Object.assign(new Error('Invalid refresh token'), { status: 401 });
 
     let payload;
     try {
       payload = jwt.verify(refreshToken, jwtConfig.refreshSecret);
     } catch {
-      refreshTokens.delete(refreshToken);
+      await sessionStore.deleteRefreshToken(refreshToken);
       throw Object.assign(new Error('Refresh token expired'), { status: 401 });
     }
 
@@ -52,19 +70,28 @@ const authService = {
     if (!user) throw Object.assign(new Error('User not found'), { status: 401 });
 
     // Rotate refresh token
-    refreshTokens.delete(refreshToken);
+    await sessionStore.deleteRefreshToken(refreshToken);
     const newRefreshToken = authService.signRefreshToken(user);
-    refreshTokens.add(newRefreshToken);
+    await sessionStore.saveRefreshToken(newRefreshToken, user.id);
+
+    // Extend the session TTL if a sessionId is embedded in the old token
+    if (payload.sid) {
+      await sessionStore.touch(payload.sid);
+    }
 
     return {
-      accessToken: authService.signAccessToken(user),
+      accessToken:  authService.signAccessToken(user, payload.sid),
       refreshToken: newRefreshToken,
     };
   },
 
-  signAccessToken(user) {
+  /**
+   * Signs an access token.
+   * Embeds sessionId (sid) so the authenticate middleware can validate it.
+   */
+  signAccessToken(user, sessionId) {
     return jwt.sign(
-      { sub: user.id, role: user.role },
+      { sub: user.id, role: user.role, sid: sessionId },
       jwtConfig.secret,
       { expiresIn: jwtConfig.expiresIn }
     );

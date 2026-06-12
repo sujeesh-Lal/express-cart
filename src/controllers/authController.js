@@ -12,17 +12,22 @@ const authController = {
 
   async login(req, res, next) {
     try {
-      const { accessToken, refreshToken, user } = await authService.login(req.body);
-      res.json({ accessToken, refreshToken, user });
+      const meta = {
+        ip:        req.ip,
+        userAgent: req.headers['user-agent'],
+      };
+      const { accessToken, refreshToken, sessionId, user } =
+        await authService.login(req.body, meta);
+      res.json({ accessToken, refreshToken, sessionId, user });
     } catch (err) {
       next(err);
     }
   },
 
-  logout(req, res, next) {
+  async logout(req, res, next) {
     try {
-      const { refreshToken } = req.body;
-      authService.logout(refreshToken);
+      const { refreshToken, sessionId } = req.body;
+      await authService.logout(refreshToken, sessionId);
       res.json({ message: 'Logged out' });
     } catch (err) {
       next(err);
