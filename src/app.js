@@ -3,6 +3,7 @@ const express = require('express');
 const { port } = require('./config/env');
 const prisma = require('./config/prismaClient');
 const errorHandler = require('./middleware/errorHandler');
+const { startGrpcServer } = require('./grpc/productGrpcServer');
 const { applyGraphQL } = require('./graphql/server');
 
 const authRoutes = require('./routes/authRoutes');
@@ -34,6 +35,8 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const httpServer = http.createServer(app);
 
+let grpcServer = null;
+
 async function start() {
   // Mount GraphQL (HTTP + WebSocket) on the shared http.Server
   await applyGraphQL(app, httpServer);
@@ -43,6 +46,9 @@ async function start() {
 
   // Central error handler — must be last
   app.use(errorHandler);
+
+  // Start gRPC server
+  grpcServer = await startGrpcServer();
 
   httpServer.listen(port, () => {
     console.log(`REST API  → http://localhost:${port}`);
@@ -59,6 +65,10 @@ start().catch((err) => {
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 async function shutdown(signal) {
   console.log(`\n${signal} received — shutting down`);
+  // Drain in-flight gRPC calls before closing
+  if (grpcServer) {
+    grpcServer.tryShutdown(() => console.log('[gRPC] server shut down'));
+  }
   httpServer.close(async () => {
     await prisma.$disconnect();
     process.exit(0);

@@ -1,17 +1,22 @@
 const cartRepository = require('../repositories/cartRepository');
 const productRepository = require('../repositories/productRepository');
-const productClient = require('../clients/productClient');
-const { services } = require('../config/env');
+const productHttpClient = require('../clients/productClient');
+const productGrpcClient = require('../grpc/productGrpcClient');
+const { services, grpc: grpcConfig } = require('../config/env');
 
 /**
- * Resolve product data from either the remote Product Service (microservice mode)
- * or the local repository (monolith mode).
+ * Resolve product data using the configured transport:
  *
- * Microservice mode is active when PRODUCT_SERVICE_URL is set in env.
+ *   1. gRPC   — when PRODUCT_GRPC_ADDR is set  (fastest, binary)
+ *   2. REST   — when PRODUCT_SERVICE_URL is set (HTTP/JSON)
+ *   3. Local  — monolith mode, direct DB access
  */
 async function resolveProduct(productId) {
+  if (grpcConfig.productAddr) {
+    return productGrpcClient.getProduct(productId);
+  }
   if (services.productServiceUrl) {
-    return productClient.getProduct(productId);
+    return productHttpClient.getProduct(productId);
   }
   return productRepository.findById(productId);
 }

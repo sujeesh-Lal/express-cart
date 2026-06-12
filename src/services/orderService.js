@@ -1,8 +1,9 @@
 const prisma = require('../config/prismaClient');
 const orderRepository = require('../repositories/orderRepository');
 const cartRepository = require('../repositories/cartRepository');
-const productClient = require('../clients/productClient');
-const { services } = require('../config/env');
+const productHttpClient = require('../clients/productClient');
+const productGrpcClient = require('../grpc/productGrpcClient');
+const { services, grpc: grpcConfig } = require('../config/env');
 
 const ORDER_STATUS = {
   PENDING: 'pending',
@@ -39,6 +40,9 @@ const orderService = {
       throw Object.assign(new Error('Cart is empty'), { status: 400 });
     }
 
+    if (grpcConfig.productAddr) {
+      return orderService._checkoutViaGrpc(userId, cart);
+    }
     if (services.productServiceUrl) {
       return orderService._checkoutViaRest(userId, cart);
     }
@@ -99,6 +103,71 @@ const orderService = {
   },
 
   /**
+   * Microservice checkout — gRPC calls to Product Service.
+   *
+   * Uses ReserveStock (single atomic RPC) so stock validation + decrement
+   * happen in one round-trip inside a server-side transaction.
+   * On DB failure → ReleaseStock compensates.
+   */
+  async _checkoutViaGrpc(userId, cart) {
+    const items = cart.items.map((i) => ({
+      id:       i.productId,
+      quantity: i.quantity,
+    }));
+
+    // ── Step 1: reserve stock atomically via gRPC ─────────────────────────
+    const reservation = await productGrpcClient.reserveStock(
+      `pending-${userId}-${Date.now()}`,
+      items
+    );
+
+    if (!reservation.success) {
+      throw Object.assign(new Error(reservation.error_message), { status: 400 });
+    }
+
+    // Map reserved items back — use priceAtTime from cart snapshot
+    const orderItems = reservation.items.map((ri) => {
+      const cartItem = cart.items.find((ci) => ci.productId === ri.id);
+      return {
+        productId:   ri.id,
+        name:        ri.name,
+        quantity:    ri.quantity,
+        priceAtTime: cartItem ? cartItem.priceAtTime : ri.price_at_time,
+      };
+    });
+
+    // ── Step 2: create order in local DB ──────────────────────────────────
+    let order;
+    try {
+      const totalAmount = +orderItems
+        .reduce((sum, i) => sum + i.priceAtTime * i.quantity, 0)
+        .toFixed(2);
+
+      order = await prisma.$transaction(async (tx) => {
+        const newOrder = await tx.order.create({
+          data: {
+            userId,
+            totalAmount,
+            status:        ORDER_STATUS.PENDING,
+            paymentStatus: PAYMENT_STATUS.UNPAID,
+            items:         { create: orderItems },
+          },
+          include: { items: true },
+        });
+        await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+        return newOrder;
+      });
+    } catch (err) {
+      // DB write failed — release reserved stock via gRPC
+      console.error('[orderService] DB write failed — releasing reserved stock via gRPC');
+      await productGrpcClient.releaseStock(`release-${userId}`, items).catch(() => {});
+      throw err;
+    }
+
+    return order;
+  },
+
+  /**
    * Microservice checkout — REST calls to Product Service.
    * Uses a compensating transaction pattern to restore stock on failure.
    */
@@ -107,7 +176,7 @@ const orderService = {
 
     // ── Step 1: validate stock via GET /products/:id ──────────────────────
     for (const item of cart.items) {
-      const product = await productClient.getProduct(item.productId);
+      const product = await productHttpClient.getProduct(item.productId);
       if (!product) {
         throw Object.assign(new Error(`Product ${item.productId} not found`), { status: 400 });
       }
@@ -129,14 +198,14 @@ const orderService = {
     const decremented = [];
     try {
       for (const item of orderItems) {
-        await productClient.decrementStock(item.productId, item.quantity);
+        await productHttpClient.decrementStock(item.productId, item.quantity);
         decremented.push(item); // track for rollback
       }
     } catch (err) {
       // Compensate — restore stock for items already decremented
       console.error('[orderService] Stock decrement failed — releasing reserved stock');
       await Promise.allSettled(
-        decremented.map(i => productClient.releaseStock(i.productId, i.quantity))
+        decremented.map(i => productHttpClient.releaseStock(i.productId, i.quantity))
       );
       throw err;
     }
@@ -166,7 +235,7 @@ const orderService = {
       // Order DB write failed — release all decremented stock
       console.error('[orderService] Order creation failed — releasing reserved stock');
       await Promise.allSettled(
-        orderItems.map(i => productClient.releaseStock(i.productId, i.quantity))
+        orderItems.map(i => productHttpClient.releaseStock(i.productId, i.quantity))
       );
       throw err;
     }

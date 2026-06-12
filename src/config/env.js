@@ -17,6 +17,13 @@ module.exports = {
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
+  grpc: {
+    // Port this process binds as a gRPC server
+    port: Number(process.env.GRPC_PORT) || 50051,
+    // Address of the remote Product Service gRPC server (client side).
+    // Set to activate gRPC mode; leave blank for REST or monolith mode.
+    productAddr: process.env.PRODUCT_GRPC_ADDR || '',
+  },
   services: {
     // Set this to enable microservice mode for the Product Service.
     // Leave blank to run in monolith mode (direct DB access).
