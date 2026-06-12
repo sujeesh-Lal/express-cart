@@ -3,7 +3,39 @@ const orderRepository = require('../repositories/orderRepository');
 const cartRepository = require('../repositories/cartRepository');
 const productHttpClient = require('../clients/productClient');
 const productGrpcClient = require('../grpc/productGrpcClient');
+const { orderQueue } = require('../queues');
 const { services, grpc: grpcConfig } = require('../config/env');
+
+// ── MQ helpers ────────────────────────────────────────────────────────────────
+
+async function publishOrderPlaced(order) {
+  await orderQueue.add('order.placed', {
+    orderId:     order.id,
+    userId:      order.userId,
+    totalAmount: order.totalAmount,
+    items:       order.items.map((i) => ({
+      productId: i.productId,
+      name:      i.name,
+      quantity:  i.quantity,
+      price:     i.priceAtTime,
+    })),
+    placedAt: new Date().toISOString(),
+  });
+}
+
+async function publishOrderCancelled(order) {
+  await orderQueue.add('order.cancelled', {
+    orderId:     order.id,
+    userId:      order.userId,
+    totalAmount: order.totalAmount,
+    items:       (order.items || []).map((i) => ({
+      productId: i.productId,
+      name:      i.name,
+      quantity:  i.quantity,
+    })),
+    cancelledAt: new Date().toISOString(),
+  });
+}
 
 const ORDER_STATUS = {
   PENDING: 'pending',
@@ -99,6 +131,7 @@ const orderService = {
       return newOrder;
     });
 
+    await publishOrderPlaced(order);
     return order;
   },
 
@@ -164,6 +197,7 @@ const orderService = {
       throw err;
     }
 
+    await publishOrderPlaced(order);
     return order;
   },
 
@@ -240,6 +274,7 @@ const orderService = {
       throw err;
     }
 
+    await publishOrderPlaced(order);
     return order;
   },
 
@@ -264,7 +299,9 @@ const orderService = {
         { status: 400 }
       );
     }
-    return orderRepository.update(id, { status: ORDER_STATUS.CANCELLED });
+    const cancelled = await orderRepository.update(id, { status: ORDER_STATUS.CANCELLED });
+    await publishOrderCancelled({ ...cancelled, items: order.items || [] });
+    return cancelled;
   },
 
   async getAllOrders() {

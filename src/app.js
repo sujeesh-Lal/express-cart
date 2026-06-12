@@ -4,6 +4,10 @@ const { port } = require('./config/env');
 const prisma = require('./config/prismaClient');
 const errorHandler = require('./middleware/errorHandler');
 const { startGrpcServer } = require('./grpc/productGrpcServer');
+const notificationWorker = require('./workers/notificationWorker');
+const inventoryWorker    = require('./workers/inventoryWorker');
+const orderWorker        = require('./workers/orderWorker');
+const analyticsWorker    = require('./workers/analyticsWorker');
 const { applyGraphQL } = require('./graphql/server');
 
 const authRoutes = require('./routes/authRoutes');
@@ -65,10 +69,22 @@ start().catch((err) => {
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 async function shutdown(signal) {
   console.log(`\n${signal} received — shutting down`);
-  // Drain in-flight gRPC calls before closing
+
+  // Drain in-flight gRPC calls
   if (grpcServer) {
     grpcServer.tryShutdown(() => console.log('[gRPC] server shut down'));
   }
+
+  // Close BullMQ workers gracefully (finish current job, reject new ones)
+  await Promise.allSettled([
+    notificationWorker.orderEventsWorker?.close(),
+    notificationWorker.paymentEventsWorker?.close(),
+    inventoryWorker.close(),
+    orderWorker.close(),
+    analyticsWorker.close(),
+  ]);
+  console.log('[workers] all workers closed');
+
   httpServer.close(async () => {
     await prisma.$disconnect();
     process.exit(0);

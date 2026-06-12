@@ -3,6 +3,7 @@
  * Replace mock blocks with real Stripe SDK calls when ready.
  */
 const orderRepository = require('../repositories/orderRepository');
+const { paymentQueue } = require('../queues');
 
 const PAYMENT_STATUS = {
   UNPAID: 'unpaid',
@@ -58,11 +59,31 @@ const paymentService = {
     if (mockEvent.type === 'payment_intent.succeeded') {
       const paymentIntentId = mockEvent.data.object.id;
       const orders = await orderRepository.findAll();
-      const order = orders.find((o) => o.paymentIntentId === paymentIntentId);
+      const order  = orders.find((o) => o.paymentIntentId === paymentIntentId);
+
       if (order) {
-        await orderRepository.update(order.id, {
-          paymentStatus: PAYMENT_STATUS.PAID,
-          status: 'processing',
+        // Publish to MQ — orderWorker will update the DB, notificationWorker sends receipt
+        await paymentQueue.add('payment.succeeded', {
+          paymentIntentId,
+          orderId:  order.id,
+          userId:   order.userId,
+          amount:   Math.round(order.totalAmount * 100), // cents
+          currency: 'usd',
+        });
+      }
+    }
+
+    if (mockEvent.type === 'payment_intent.payment_failed') {
+      const { id: paymentIntentId, last_payment_error } = mockEvent.data.object;
+      const orders = await orderRepository.findAll();
+      const order  = orders.find((o) => o.paymentIntentId === paymentIntentId);
+
+      if (order) {
+        await paymentQueue.add('payment.failed', {
+          paymentIntentId,
+          orderId:        order.id,
+          userId:         order.userId,
+          failureMessage: last_payment_error?.message || 'Payment declined',
         });
       }
     }
