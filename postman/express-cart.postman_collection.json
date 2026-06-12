@@ -1,0 +1,380 @@
+{
+  "info": {
+    "name": "express-cart — Service Communication Tests",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Tests for REST service-to-service, gRPC (see TESTING.md), and Message Queue flows."
+  },
+  "item": [
+
+    {
+      "name": "0. Setup",
+      "item": [
+        {
+          "name": "Register user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/register", "host": ["{{base_url}}"], "path": ["auth","register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"test@example.com\",\n  \"password\": \"secret123\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));"
+            ]}
+          }]
+        },
+        {
+          "name": "Login → save tokens",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth","login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"secret123\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.environment.set('access_token',  b.accessToken);",
+              "pm.environment.set('refresh_token', b.refreshToken);",
+              "pm.environment.set('session_id',    b.sessionId);",
+              "pm.test('sessionId present', () => pm.expect(b.sessionId).to.be.a('string'));"
+            ]}
+          }]
+        },
+        {
+          "name": "Create test product (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/products", "host": ["{{base_url}}"], "path": ["products"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Headphones\",\n  \"price\": 49.99,\n  \"stock\": 100,\n  \"category\": \"Electronics\",\n  \"description\": \"For testing service communication\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const b = pm.response.json();",
+              "pm.environment.set('product_id', b.id);",
+              "pm.test('product_id saved', () => pm.expect(b.id).to.be.a('string'));"
+            ]}
+          }]
+        }
+      ]
+    },
+
+    {
+      "name": "1. REST — Service-to-Service",
+      "description": "Tests for POST /products/:id/decrement-stock and /release-stock.\nRequires service_token env var — run: node scripts/generate-service-token.js",
+      "item": [
+        {
+          "name": "Decrement stock (service token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{service_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/products/{{product_id}}/decrement-stock",
+              "host": ["{{base_url}}"], "path": ["products","{{product_id}}","decrement-stock"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 5\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('stock decremented', () => pm.expect(b.stock).to.equal(95));"
+            ]}
+          }]
+        },
+        {
+          "name": "Decrement stock — rejected without service token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/products/{{product_id}}/decrement-stock",
+              "host": ["{{base_url}}"], "path": ["products","{{product_id}}","decrement-stock"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 5\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('401 without service token', () => pm.response.to.have.status(401));"
+            ]}
+          }]
+        },
+        {
+          "name": "Decrement stock — rejected with user JWT (not service token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/products/{{product_id}}/decrement-stock",
+              "host": ["{{base_url}}"], "path": ["products","{{product_id}}","decrement-stock"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 5\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('403 with user JWT', () => pm.response.to.have.status(403));"
+            ]}
+          }]
+        },
+        {
+          "name": "Release stock (service token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{service_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/products/{{product_id}}/release-stock",
+              "host": ["{{base_url}}"], "path": ["products","{{product_id}}","release-stock"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 5\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('stock restored to 100', () => pm.expect(b.stock).to.equal(100));"
+            ]}
+          }]
+        },
+        {
+          "name": "Decrement more than available stock → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{service_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/products/{{product_id}}/decrement-stock",
+              "host": ["{{base_url}}"], "path": ["products","{{product_id}}","decrement-stock"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 9999\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('400 Insufficient stock', () => pm.response.to.have.status(400));",
+              "pm.test('error message present', () => pm.expect(pm.response.json().error).to.include('stock'));"
+            ]}
+          }]
+        }
+      ]
+    },
+
+    {
+      "name": "2. Message Queue — Trigger via API",
+      "description": "Each request below publishes a job to BullMQ. Watch server logs to confirm workers process the jobs.",
+      "item": [
+        {
+          "name": "Add item to cart",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/cart/items", "host": ["{{base_url}}"], "path": ["cart","items"] },
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 2\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('cart has items', () => pm.expect(pm.response.json().itemCount).to.be.above(0));"
+            ]}
+          }]
+        },
+        {
+          "name": "Checkout → triggers order.placed event",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const b = pm.response.json();",
+              "pm.environment.set('order_id', b.id);",
+              "pm.test('order status is pending', () => pm.expect(b.status).to.equal('pending'));",
+              "console.log('✅ Watch server logs for: [notificationWorker] ✓ order.placed');",
+              "console.log('✅ Watch server logs for: [inventoryWorker] ✓ order.placed');",
+              "console.log('✅ Watch server logs for: [analyticsWorker] ✓ order.placed');"
+            ]}
+          }]
+        },
+        {
+          "name": "Cancel order → triggers order.cancelled event",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/orders/{{order_id}}/cancel",
+              "host": ["{{base_url}}"], "path": ["orders","{{order_id}}","cancel"]
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('status is cancelled', () => pm.expect(pm.response.json().status).to.equal('cancelled'));",
+              "console.log('✅ Watch server logs for: [notificationWorker] ✓ order.cancelled');",
+              "console.log('✅ Watch server logs for: [inventoryWorker] ✓ order.cancelled');"
+            ]}
+          }]
+        },
+        {
+          "name": "Create new order for payment test",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/cart/items", "host": ["{{base_url}}"], "path": ["cart","items"] },
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 1\n}" }
+          }
+        },
+        {
+          "name": "Checkout (for payment webhook test)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/orders", "host": ["{{base_url}}"], "path": ["orders"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.environment.set('order_id', pm.response.json().id);"
+            ]}
+          }]
+        },
+        {
+          "name": "Payment webhook → triggers payment.succeeded event",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/payments/webhook", "host": ["{{base_url}}"], "path": ["payments","webhook"] },
+            "body": { "mode": "raw", "raw": "{}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 received', () => pm.response.to.have.status(200));",
+              "pm.test('received flag', () => pm.expect(pm.response.json().received).to.be.true);",
+              "console.log('✅ Watch server logs for: [orderWorker] ✓ payment.succeeded');",
+              "console.log('✅ Watch server logs for: [notificationWorker] ✓ payment.succeeded');"
+            ]}
+          }]
+        },
+        {
+          "name": "Verify order status updated by orderWorker",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/orders/{{order_id}}",
+              "host": ["{{base_url}}"], "path": ["orders","{{order_id}}"]
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('paymentStatus is paid (set by orderWorker)', () => pm.expect(b.paymentStatus).to.equal('paid'));",
+              "pm.test('status is processing', () => pm.expect(b.status).to.equal('processing'));"
+            ]}
+          }]
+        }
+      ]
+    },
+
+    {
+      "name": "3. Session (Redis)",
+      "description": "Verify that session is stored in Redis on login and invalidated on logout.",
+      "item": [
+        {
+          "name": "Authenticated request (session valid)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/users/me", "host": ["{{base_url}}"], "path": ["users","me"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 OK — session valid', () => pm.response.to.have.status(200));"
+            ]}
+          }]
+        },
+        {
+          "name": "Logout (invalidates session in Redis)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth","logout"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\",\n  \"sessionId\": \"{{session_id}}\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 Logged out', () => pm.response.to.have.status(200));"
+            ]}
+          }]
+        },
+        {
+          "name": "Reuse access token after logout → 401",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/users/me", "host": ["{{base_url}}"], "path": ["users","me"] }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('401 — session deleted from Redis', () => pm.response.to.have.status(401));",
+              "pm.test('correct error', () => pm.expect(pm.response.json().error).to.include('Session'));"
+            ]}
+          }]
+        }
+      ]
+    }
+
+  ]
+}
