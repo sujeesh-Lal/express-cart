@@ -1,8 +1,29 @@
 const productRepository = require('../repositories/productRepository');
+const mockProductService = require('./mockProductService');
+const { CircuitBreaker, CircuitOpenError } = require('../utils/circuitBreaker');
+
+// Circuit breaker for the product listing DB call.
+// Trips after 3 failures within a 30-second window; stays open for 60 seconds.
+const productListCircuitBreaker = new CircuitBreaker('product-list', {
+  failureThreshold: 3,
+  windowMs: 30_000,       // 30 seconds
+  recoveryTimeoutMs: 60_000,
+});
 
 const productService = {
   async listProducts(query) {
-    return productRepository.findAll(query);
+    try {
+      return await productListCircuitBreaker.exec(() =>
+        productRepository.findAll(query)
+      );
+    } catch (err) {
+      // Circuit is OPEN (or just tripped) — fall back to mock data
+      if (err instanceof CircuitOpenError || productListCircuitBreaker.getStatus().state !== 'CLOSED') {
+        console.warn('[productService] Falling back to mock data —', err.message);
+        return mockProductService.listProducts(query);
+      }
+      throw err;
+    }
   },
 
   async getProduct(id) {
